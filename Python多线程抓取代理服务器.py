@@ -1,121 +1,142 @@
+#coding: utf-8
 
-    #!/usr/bin/env python
-    #coding:utf-8
-    #BLOG: blog.linuxeye.com
-    import urllib2
-    import re
-    import threading
-    import time
-    import MySQLdb
-    rawProxyList = []
-    checkedProxyList = []
-    #×¥È¡´úÀíÍøÕ¾
-    targets = []
-    for i in xrange(1,42):
-            target = r"http://www.proxy.com.ru/list_%d.html" % i
-            targets.append(target)
-    #×¥È¡´úÀí·şÎñÆ÷ÕıÔò
-    p = re.compile(r'''<tr><b><td>(\d+)</td><td>(.+?)</td><td>(\d+)</td><td>(.+?)</td><td>(.+?)</td></b></tr>''')
-    #»ñÈ¡´úÀíµÄÀà
-    class ProxyGet(threading.Thread):
-        def __init__(self,target):
-            threading.Thread.__init__(self)
-            self.target = target
-        def getProxy(self):
-            print "´úÀí·şÎñÆ÷Ä¿±êÍøÕ¾£º " + self.target
-            req = urllib2.urlopen(self.target)
-            result = req.read()
-            #print chardet.detect(result)
-            matchs = p.findall(result)
-    #       print matchs
-            for row in matchs:
-                ip=row[1]
-                port =row[2]
-                addr = row[4].decode("cp936").encode("utf-8")
-                proxy = [ip,port,addr]
-                print proxy
-                rawProxyList.append(proxy)
-        def run(self):
-            self.getProxy()
-    #¼ìÑé´úÀíµÄÀà
-    class ProxyCheck(threading.Thread):
-        def __init__(self,proxyList):
-            threading.Thread.__init__(self)
-            self.proxyList = proxyList
-            self.timeout = 5
-            self.testUrl = "http://www.baidu.com/"
-            self.testStr = "030173"
-        def checkProxy(self):
-            cookies = urllib2.HTTPCookieProcessor()
-            for proxy in self.proxyList:
-                proxyHandler = urllib2.ProxyHandler({"http" : r'http://%s:%s' %(proxy[0],proxy[1])})
-                #print r'http://%s:%s' %(proxy[0],proxy[1])
-                opener = urllib2.build_opener(cookies,proxyHandler)
-                opener.addheaders = [('User-agent', 'Mozilla/5.0 (Windows NT 6.2; WOW64; rv:22.0) Gecko/20100101 Firefox/22.0')]
-                #urllib2.install_opener(opener)
-                t1 = time.time()
-                try:
-                    #req = urllib2.urlopen("http://www.baidu.com", timeout=self.timeout)
-                    req = opener.open(self.testUrl, timeout=self.timeout)
-                    #print "urlopen is ok...."
-                    result = req.read()
-                    #print "read html...."
-                    timeused = time.time() - t1
-                    pos = result.find(self.testStr)
-                    #print "pos is %s" %pos
-                    if pos > 1:
-                        checkedProxyList.append((proxy[0],proxy[1],proxy[2],timeused))
-                        #print "ok ip: %s %s %s %s" %(proxy[0],proxy[1],proxy[2],timeused)
-                    else:
-                         continue
-                except Exception,e:
-                    #print e.message
-                    continue
-        def run(self):
-            self.checkProxy()
-    if __name__ == "__main__":
-        getThreads = []
-        checkThreads = []
-    #¶ÔÃ¿¸öÄ¿±êÍøÕ¾¿ªÆôÒ»¸öÏß³Ì¸ºÔğ×¥È¡´úÀí
-    for i in range(len(targets)):
-        t = ProxyGet(targets[i])
-        getThreads.append(t)
-    for i in range(len(getThreads)):
-        getThreads[i].start()
-    for i in range(len(getThreads)):
-        getThreads[i].join()
-    print '.'*10+"×Ü¹²×¥È¡ÁË%s¸ö´úÀí" %len(rawProxyList) +'.'*10
-    #¿ªÆô20¸öÏß³Ì¸ºÔğĞ£Ñé£¬½«×¥È¡µ½µÄ´úÀí·Ö³É20·İ£¬Ã¿¸öÏß³ÌĞ£ÑéÒ»·İ
-    for i in range(20):
-        t = ProxyCheck(rawProxyList[((len(rawProxyList)+19)/20) * i:((len(rawProxyList)+19)/20) * (i+1)])
-        checkThreads.append(t)
-    for i in range(len(checkThreads)):
-        checkThreads[i].start()
-    for i in range(len(checkThreads)):
-        checkThreads[i].join()
-    print '.'*10+"×Ü¹²ÓĞ%s¸ö´úÀíÍ¨¹ıĞ£Ñé" %len(checkedProxyList) +'.'*10
-    #²åÈëÊı¾İ¿â£¬±í½á¹¹×Ô¼º´´½¨£¬ËÄ¸ö×Ö¶Îip,port,speed,address
-    def db_insert(insert_list):
-        try:
-            conn = MySQLdb.connect(host="localhost", user="root", passwd="admin",db="m_common",charset='utf8')
-            cursor = conn.cursor()
-            cursor.execute('delete from proxy')
-            cursor.execute('alter table proxy AUTO_INCREMENT=1')
-            cursor.executemany("INSERT INTO proxy(ip,port,speed,address) VALUES (%s,%s,%s,%s)",insert_list)
-            conn.commit()
-            cursor.close()
-            conn.close()
-        except MySQLdb.Error,e:
-            print "Mysql Error %d: %s" % (e.args[0], e.args[1])
-    #´úÀíÅÅĞò³Ö¾Ã»¯
-    proxy_ok = []
-    f= open("proxy_list.txt",'w+')
-    for proxy in sorted(checkedProxyList,cmp=lambda x,y:cmp(x[3],y[3])):
-        if proxy[3] < 8:
-            #print "checked proxy is: %s:%s\t%s\t%s" %(proxy[0],proxy[1],proxy[2],proxy[3])
-            proxy_ok.append((proxy[0],proxy[1],proxy[3],proxy[2]))
-            f.write("%s:%s\t%s\t%s\n"%(proxy[0],proxy[1],proxy[2],proxy[3]))
-    f.close()
-    db_insert(proxy_ok)
+import urllib2
+import re
+import time
+import threading
+import MySQLdb
 
- 
+rawProxyList = []
+checkedProxyList = []
+
+#æŠ“å–ä»£ç†ç½‘ç«™
+targets = []
+for i in xrange(1, 23):
+    target = r"http://www.proxy.com.ru/list_%d.html" % i
+    targets.append(target)
+    #print target + "\n"
+
+#æŠ“å–ä»£ç†æœåŠ¡å™¨æ­£åˆ™
+p = re.compile(r'''<tr><b><td>(\d+)</td><td>(.+?)</td><td>(\d+)</td><td>(.+?)</td><td>(.+?)</td></b></tr>''')
+
+#è·å–ä»£ç†çš„ç±»
+
+class ProxyGet(threading.Thread):
+    def __init__(self, target):
+        threading.Thread.__init__(self)
+        self.target = target
+
+
+    def getProxy(self):
+        req = urllib2.Request(self.target)
+        respnse = urllib2.urlopen(req)
+        result = respnse.read()
+        matches = p.findall(result)
+        #print matches
+        for row in matches:
+            ip = row[1]
+            port = row[2]
+            addr = row[4].decode("cp936").encode("utf-8")
+            proxy = [ip, port, addr]
+            #print proxy
+            rawProxyList.append(proxy)
+
+
+    def run(self):
+        self.getProxy()
+
+#æ ¸å¯¹ä»£ç†æ˜¯å¦æœ‰æ•ˆçš„ç±»
+class ProxyCheck(threading.Thread):
+    def __init__(self,proxyList):
+        threading.Thread.__init__(self)
+        self.proxyList = proxyList
+        self.timeout = 5
+        self.testUrl = "http://www.baidu.com/"
+        self.testStr = "030173"
+
+    def checkProxy(self):
+        cookies = urllib2.HTTPCookieProcessor()
+        for proxy in self.proxyList:
+            proxyHandler = urllib2.ProxyHandler({"http": r'http://%s:%s' %(proxy[0], proxy[1])})
+            #print r'http://%s:%s' %(proxy[0],proxy[1])
+            opener = urllib2.build_opener(cookies, proxyHandler)
+            opener.addheaders = [('User-agent', 'Mozilla/5.0 (Windows NT 6.2; WOW64; rv:22.0) Gecko/20100101 Firefox/22.0')]
+            #urllib2.install_opener(opener)
+            t1 = time.time()
+
+            try:
+                #req = urllib2.urlopen("http://www.baidu.com", timeout=self.timeout)
+                req = opener.open(self.testUrl, timeout=self.timeout)
+                #print "urlopen is ok...."
+                result = req.read()
+                #print "read html...."
+                timeused = time.time() - t1
+                pos = result.find(self.testStr)
+                #print "pos is %s" %pos
+
+                if pos >= 1:
+                    checkedProxyList.append((proxy[0], proxy[1], proxy[2], timeused))
+                    print "ok ip: %s %s %s %s" %(proxy[0],proxy[1],proxy[2],timeused)
+                else:
+                     continue
+            except Exception, e:
+                #print e.message
+                continue
+
+    def run(self):
+        self.checkProxy()
+
+
+if __name__ == "__main__":
+    getThreads = []
+    checkThreads = []
+
+#å¯¹æ¯ä¸ªç›®æ ‡ç½‘ç«™å¼€å¯ä¸€ä¸ªçº¿ç¨‹è´Ÿè´£æŠ“å–ä»£ç†
+for i in range(len(targets)):
+    t = ProxyGet(targets[i])
+    getThreads.append(t)
+
+for i in range(len(getThreads)):
+    getThreads[i].start()
+
+for i in range(len(getThreads)):
+    getThreads[i].join()
+
+print '.'*10 + "æ€»å…±æŠ“å–äº†%sä¸ªä»£ç†" % len(rawProxyList) + '.'*10
+
+#å¼€å¯20ä¸ªçº¿ç¨‹è´Ÿè´£æ ¡éªŒï¼Œå°†æŠ“å–åˆ°çš„ä»£ç†åˆ†æˆ20ä»½ï¼Œæ¯ä¸ªçº¿ç¨‹æ ¡éªŒä¸€ä»½
+for i in range(20):
+    t = ProxyCheck(rawProxyList[((len(rawProxyList)+19)/20) * i:((len(rawProxyList)+19)/20) * (i+1)])
+    checkThreads.append(t)
+
+for i in range(len(checkThreads)):
+    checkThreads[i].start()
+
+for i in range(len(checkThreads)):
+    checkThreads[i].join()
+
+print '.'*10 + "æ€»å…±æŠ“å–äº†%sä¸ªä»£ç†" % len(checkedProxyList) + '.'*10
+
+#æ’å…¥æ•°æ®åº“ï¼Œå››ä¸ªå­—æ®µip, port, speed, addr
+def db_insert(insert_list):
+    try:
+        conn = MySQLdb.connect(host="127.0.0.1", user="root", passwd="root", db="cdma", charset='utf8')
+        cursor = conn.cursor()
+        cursor.execute('delete from proxy')
+        cursor.execute('alter table proxy AUTO_INCREMENT=1')
+        cursor.executemany("INSERT INTO proxy(ip,port,speed,address) VALUES(%s, %s, %s,%s)", insert_list)
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+    except MySQLdb.Error, e:
+        print "Mysql Error %d: %s" %(e.args[0], e.args[1])
+
+#ä»£ç†æ’åºæŒä¹…åŒ–
+proxy_ok = []
+for proxy in sorted(checkedProxyList, cmp=lambda x, y: cmp(x[3], y[3])):
+    if proxy[3] < 8:
+        #print "checked proxy is: %s:%s\t%s\t%s" %(proxy[0],proxy[1],proxy[2],proxy[3])
+        proxy_ok.append((proxy[0], proxy[1], proxy[3], proxy[2]))
+
+db_insert(proxy_ok)
