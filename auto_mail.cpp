@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include "mysock.h"
 #include <string.h>
+#include <time.h>
+#include <sys/time.h>
 
 
 #define BUFSIZE 8192 //8k
@@ -93,7 +95,7 @@ void EncodeBase64(char *dbuf, char *buf128, int len)
 //第二个参数代表登陆邮件服务器的用户名
 //第三个参数代表密码
 //返回值0代表成功，1代表失败
-int SendMail(const char *IP, const char *username, const char *passwd)
+int SendMail(const char *IP, const char *username, const char *passwd, const char *touser, const char *subject, const char *message)
 {
 	//在堆中申请一个buffer，来存放与服务器交互时的消息内容
 	char *buf = (char *)malloc(BUFSIZE);
@@ -101,6 +103,22 @@ int SendMail(const char *IP, const char *username, const char *passwd)
 	char asc[256];//代表ascii编码格式的字符串
 	int rc = 0;//这个代表函数的返回值
 	int num = 0;
+
+	time_t tTimeVal;
+	struct tm *ptTimeStruct;
+	char body[BUFSIZE] = {0};
+	tTimeVal = time(NULL);
+//	printf("%s\n", (char *)tTimeVal);
+	ptTimeStruct = localtime(&tTimeVal);
+//	printf("%s\n", (char *)ptTimeStruct);
+	sprintf(body, "From: \"%s\" <%s>\r\n", username, username);
+	sprintf(body, "%sTo: <%s>\r\n", body, touser);
+	sprintf(body, "%sReferences:\r\nIn-Reply-To:\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative;\r\nX-Mailer: Microsoft Outlook 15.0\r\nContent-Language: zh-cn\r\nContent-Type: text/plain;\r\n", body);
+	sprintf(body, "%sDate: %02d, %02d %02d %04d %02d:%02d:%02d %d\r\n", body, ptTimeStruct->tm_wday, ptTimeStruct->tm_mday, ptTimeStruct->tm_mon + 1, ptTimeStruct->tm_year + 1900, ptTimeStruct->tm_hour, ptTimeStruct->tm_min, ptTimeStruct->tm_sec, ptTimeStruct->tm_isdst);
+	sprintf(body, "%sSubject: %s%02d:%02d\r\n\r\n", body, subject, ptTimeStruct->tm_min, ptTimeStruct->tm_sec);
+	sprintf(body, "%s%s\r\n", body, message);
+	printf("\n%s\n", body);
+
 
 	//连接到参数IP指定的smtp服务器
 	
@@ -152,6 +170,7 @@ int SendMail(const char *IP, const char *username, const char *passwd)
 
 	memset(buf, 0, BUFSIZE);
 	rc = app_client_recv(buf, BUFSIZE);//从服务端接收消息
+	printf("buf = %s\n", buf);
         //memset(asc, 0, sizeof(asc));
         //b.Decode(&buf[4], asc);
         //printf("buf = %s\n", asc); 
@@ -165,7 +184,7 @@ int SendMail(const char *IP, const char *username, const char *passwd)
       //  b.Encode(asc, strlen(asc), base);//将密码转化为base64编码
         sprintf(buf, "%s\r\n", base);//将转化后后的结果放入buf
         rc = app_client_send(buf, strlen(buf));
-
+	printf("buf = %s\n", buf);
 	memset(buf, 0, BUFSIZE);
         rc = app_client_recv(buf, BUFSIZE);//从服务端接收消息
 
@@ -174,25 +193,67 @@ int SendMail(const char *IP, const char *username, const char *passwd)
 	//解析来自服务端的消息，判断登陆是否成功
 	sscanf(buf, "%d %s\r\n", &num, asc);//可以把从服务端收到的消息分为两部分
 	//第一部分转化为int，放入变量num中，第二部分转为字符串，放入asc中
-	free(buf);//记得将堆内存释放
+	//free(buf);//记得将堆内存释放
+	printf("num = %d, %s\n", num, asc);
 	if (num == 235)
+	{
+		// MAIL FROM
+		char mailFrom[100]="MAIL FROM: <";
+		strcat(mailFrom,username);
+		strcat(mailFrom,">\r\n");
+		memset(buf, 0, 1500);
+		strcpy(buf, mailFrom);
+		rc = app_client_send(buf, strlen(buf));
+		memset(buf, 0, BUFSIZE);
+                rc = app_client_recv(buf, BUFSIZE);//从服务端接收消息
+		printf("%s\n", buf);
+		// RCPT TO 第一个收件人
+		sprintf(buf, "RCPT TO:<%s>\r\n", touser);
+		rc = app_client_send(buf, strlen(buf));
+		memset(buf, 0, BUFSIZE);
+                rc = app_client_recv(buf, BUFSIZE);//从服务端接收消息
+		printf("%s\n", buf);
+
+		// DATA 准备开始发送邮件内容
+		strcpy(buf, "DATA\r\n");
+		rc = app_client_send(buf, strlen(buf));
+		memset(buf, 0, BUFSIZE);
+                rc = app_client_recv(buf, BUFSIZE);//从服务端接收消息
+		printf("%s\n", buf);
+
+		// 发送邮件内容，\r\n.\r\n内容结束标记
+		memset(buf, 0, BUFSIZE);
+		sprintf(buf, "%s\r\n.\r\n", body);
+		rc = app_client_send(buf, strlen(buf));
+		memset(buf, 0, BUFSIZE);
+                rc = app_client_recv(buf, BUFSIZE);//从服务端接收消息
+		printf("%s\n", buf);
+
+		// QUIT
+                strcpy(buf, "QUIT\r\n");
+		rc = app_client_send(buf, strlen(buf));
+		memset(buf, 0, BUFSIZE);
+                rc = app_client_recv(buf, BUFSIZE);//从服务端接收消息
+		printf("%s\n", buf);
+	        free(buf);//记得将堆内存释放
 		return 0;//成功登陆邮箱
-	else
+	}else
+	{
+		free(buf);//记得将堆内存释放
 		return -1;// 登陆失败
+	}
 
 }
 
-int main()
+int main(int argc, char *argv[])
 {
 	int i;
 	//for(i = 0; i < 100000; i++)//穷举一般需要消耗很多时间，为了缩短时间，假设密码是a开头的6位数字
 //	{
-		char pass[128] = { 0 };
 //		sprintf(pass, "a%05d", i);
-		strcpy(pass, "bbp123321");
-		if (SendMail("smtp.163.com", "18096457719@163.com", pass) == 0)
+		if (SendMail("smtp.163.com", argv[1], argv[2], argv[3], "会计分录", "This is a test mail") == 0)
 		{
-			printf("%s\n", pass);
+//			printf("%s\n", pass);
 			return 0;
 		}
 //	}//循环完成auth_smtp没有一次成功，那么就打印失败
